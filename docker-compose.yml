@@ -1,0 +1,29 @@
+
+services:
+  nginx:
+    image: nginx:1.25
+    container_name: nginx_proxy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./www/certbot:/var/www/certbot
+      - ./letsencrypt:/etc/letsencrypt
+      - /var/log/nginx:/var/log/nginx
+    networks: [proxy_net]
+
+  certbot:
+    image: certbot/certbot:latest
+    container_name: certbot
+    volumes:
+      - ./www/certbot:/var/www/certbot
+      - ./letsencrypt:/etc/letsencrypt
+    entrypoint: sh
+    command: -c "echo 'certbot ready'"
+
+networks:
+  proxy_net:
+    external: true
