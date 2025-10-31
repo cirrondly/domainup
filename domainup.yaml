@@ -1,0 +1,58 @@
+version: 1
+email: contact@cirrondly.com
+engine: nginx
+cert:
+  method: webroot
+  webroot_dir: ./www/certbot
+network: proxy_net
+domains:
+  - host: api.example.com
+    upstreams:
+      - name: app1
+        target: back_web_1:8000
+        weight: 1
+    paths:
+      - path: /
+        upstream: app1
+        websocket: true
+        strip_prefix: false
+    headers:
+      hsts: true
+      extra:
+        X-Frame-Options: DENY
+        X-Content-Type-Options: nosniff
+    security:
+      basic_auth:
+        enabled: false
+        users: []
+      allow_ips: []
+      rate_limit:
+        enabled: false
+        requests_per_minute: 600
+    tls:
+      enabled: true
+    gzip: true
+    cors_passthrough: false
+
+  - host: console.example.com
+    upstreams:
+      - name: console
+        target: console:3000
+    paths:
+      - path: /
+        upstream: console
+    security:
+      basic_auth:
+        enabled: true
+        users: ["admin:{SHA}..."]
+    tls: { enabled: true }
+
+  - host: data.example.com
+    upstreams:
+      - name: otel
+        target: otel:4318
+    paths:
+      - path: "~* ^/(v1/|otlp/v1/)(traces|logs|metrics)"
+        upstream: otel
+        body_size: 20m
+    tls: { enabled: true }

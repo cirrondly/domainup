@@ -1,0 +1,40 @@
+http:
+  routers:
+    {{ domain.host | replace('.', '_') }}:
+      rule: "Host(`{{ domain.host }}`)"
+      entryPoints: [websecure]
+      service: {{ domain.host | replace('.', '_') }}_svc
+      {% set mids = [] %}
+      {% if domain.security.basic_auth.enabled %}
+      {% set _ = mids.append(domain.host | replace('.', '_') ~ "_auth") %}
+      {% endif %}
+      {% if domain.cors_passthrough %}
+      {% set _ = mids.append(domain.host | replace('.', '_') ~ "_cors") %}
+      {% endif %}
+      {% if mids %}
+      middlewares: {{ mids }}
+      {% endif %}
+      tls: {}
+  services:
+    {{ domain.host | replace('.', '_') }}_svc:
+      loadBalancer:
+        servers:
+          {% for u in domain.upstreams %}
+          - url: "http://{{ u.target }}"
+          {% endfor %}
+        passHostHeader: true
+  middlewares:
+    {% if domain.security.basic_auth.enabled %}
+    {{ domain.host | replace('.', '_') }}_auth:
+      basicAuth:
+        usersFile: "/etc/traefik/htpasswd/{{ domain.host }}.htpasswd"
+    {% endif %}
+    {% if domain.cors_passthrough %}
+    {{ domain.host | replace('.', '_') }}_cors:
+      headers:
+        accessControlAllowOriginList: ["*"]
+        accessControlAllowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+        accessControlAllowHeaders: ["Authorization", "Content-Type", "X-Requested-With"]
+        addVaryHeader: true
+        accessControlMaxAge: 86400
+    {% endif %}

@@ -1,0 +1,87 @@
+{% set tls_enabled = tls.enabled %}
+{% set hsts_on = headers.hsts %}
+upstream {{ host | replace('.', '_') }}_upstream {
+  {% if lb == 'least_conn' %}least_conn;{% endif %}
+  {% for u in upstreams %}
+  server {{ u.target }} weight={{ u.weight }};
+  {% endfor %}
+  {% if sticky_cookie %}sticky cookie={{ sticky_cookie }} expires=1h domain={{ host }} path=/;{% endif %}
+}
+
+server {
+  {% if tls_enabled %}
+  listen 443 ssl http2; listen [::]:443 ssl http2;
+  ssl_certificate /etc/letsencrypt/live/{{ host }}/fullchain.pem;
+  ssl_certificate_key /etc/letsencrypt/live/{{ host }}/privkey.pem;
+  {% else %}
+  listen 80; listen [::]:80;
+  {% endif %}
+
+  server_name {{ host }};
+
+  {% if hsts_on %}add_header Strict-Transport-Security $hsts_header always;{% endif %}
+
+  # health
+  location = /health { access_log off; return 200 "healthy\n"; }
+
+  {% if security.basic_auth.enabled %}
+  # Basic auth (Note: user list inline not yet supported with htpasswd file generation)
+  auth_basic "Restricted";
+  auth_basic_user_file /etc/nginx/htpasswd/{{ host }}.htpasswd;
+  {% endif %}
+
+  {% if security.allow_ips and security.allow_ips|length > 0 %}
+  satisfy any;
+  {% for ip in security.allow_ips %}allow {{ ip }};{% endfor %}
+  deny all;
+  {% endif %}
+
+  {% if gzip %}gzip on;{% else %}gzip off;{% endif %}
+
+  {% for p in paths %}
+  location {{ p.path }} {
+    {% if cors_passthrough %}
+    # CORS preflight
+    if ($request_method = 'OPTIONS') {
+      add_header 'Access-Control-Allow-Origin' '*';
+      add_header 'Access-Control-Allow-Methods' 'GET, POST, PUT, PATCH, DELETE, OPTIONS';
+      add_header 'Access-Control-Allow-Headers' 'Authorization, Content-Type, X-Requested-With';
+      add_header 'Access-Control-Max-Age' '86400';
+      return 204;
+    }
+    # CORS headers on responses
+    add_header 'Access-Control-Allow-Origin' '*';
+    add_header 'Access-Control-Allow-Credentials' 'false';
+    {% endif %}
+    proxy_pass http://{{ host | replace('.', '_') }}_upstream;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_http_version 1.1;
+    proxy_buffering off;
+    proxy_request_buffering off;
+    {% if p.websocket %}
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    {% else %}
+    proxy_set_header Connection "keep-alive";
+    {% endif %}
+    {% if p.body_size %}client_max_body_size {{ p.body_size }};{% endif %}
+  }
+  {% endfor %}
+
+  {% for k,v in headers.extra.items() %}
+  add_header {{ k }} {{ v | tojson }} always;
+  {% endfor %}
+
+  {% if security.rate_limit.enabled %}
+  # Simple rate limit: apply zone to a default location
+  location / {
+    limit_req zone=rlimit_zone burst={{ security.rate_limit.requests_per_minute }} nodelay;
+    proxy_pass http://{{ host | replace('.', '_') }}_upstream;
+    proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_http_version 1.1; proxy_buffering off; proxy_request_buffering off;
+  }
+  {% endif %}
+}

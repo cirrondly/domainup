@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "domainup"
+version = "0.1.1"
+description = "Domain + HTTPS setup for Docker services (Nginx + Certbot)"
+authors = [{ name="Cirrondly", email="contact@cirrondly.com" }]
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = [
+  "typer>=0.12",
+  "jinja2>=3.1",
+  "pyyaml>=6.0",
+  "rich>=13.7",
+  "pydantic>=2.4",
+  "requests>=2.32",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "build>=1.0",
+  "twine>=6.0",
+  "ruff>=0.6",
+  "black>=24.0",
+  "mypy>=1.10",
+]
+
+[project.scripts]
+domainup = "domainup.cli:app"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["domainup*"]
+
+[tool.setuptools.package-data]
+"domainup" = [
+  "templates/**/*.j2",
+  "templates/**/*.yml",
+  "runtime/*",
+  "runtime/*.yml",
+]
