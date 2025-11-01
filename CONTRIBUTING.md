@@ -14,7 +14,12 @@ pip install -e .[dev]
 3. Run tests:
 
 ```bash
-pytest -q
+# Activate the venv first, then run
+source .venv/bin/activate
+python -m pytest -q
+
+# Or use the Makefile helper (uses .venv):
+make test
 ```
 
 ## Code style and quality

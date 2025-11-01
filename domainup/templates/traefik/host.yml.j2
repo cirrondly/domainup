@@ -11,6 +11,9 @@ http:
       {% if domain.cors_passthrough %}
       {% set _ = mids.append(domain.host | replace('.', '_') ~ "_cors") %}
       {% endif %}
+      {% if domain.security.rate_limit.enabled %}
+      {% set _ = mids.append(domain.host | replace('.', '_') ~ "_ratelimit") %}
+      {% endif %}
       {% if mids %}
       middlewares: {{ mids }}
       {% endif %}
@@ -23,6 +26,11 @@ http:
           - url: "http://{{ u.target }}"
           {% endfor %}
         passHostHeader: true
+        {% if domain.sticky_cookie %}
+        sticky:
+          cookie:
+            name: "{{ domain.sticky_cookie }}"
+        {% endif %}
   middlewares:
     {% if domain.security.basic_auth.enabled %}
     {{ domain.host | replace('.', '_') }}_auth:
@@ -37,4 +45,10 @@ http:
         accessControlAllowHeaders: ["Authorization", "Content-Type", "X-Requested-With"]
         addVaryHeader: true
         accessControlMaxAge: 86400
+    {% endif %}
+    {% if domain.security.rate_limit.enabled %}
+    {{ domain.host | replace('.', '_') }}_ratelimit:
+      rateLimit:
+        average: {{ (domain.security.rate_limit.requests_per_minute // 60) if (domain.security.rate_limit.requests_per_minute // 60) > 0 else 1 }}
+        burst: {{ (domain.security.rate_limit.requests_per_minute // 10) if (domain.security.rate_limit.requests_per_minute // 10) > 0 else 1 }}
     {% endif %}

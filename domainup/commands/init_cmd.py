@@ -1,5 +1,4 @@
 import typer
-from rich import print
 
 
 def init_cmd(email: str = typer.Option(..., "--email", help="Let's Encrypt email")):

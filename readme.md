@@ -171,6 +171,7 @@ Created by Cirrondly (cirrondly.com) — a tiny startup by José MARIN.
 
 Delivered from roadmap in this release:
 - Hetzner DNS automation (A/AAAA upsert) via `domainup dns --provider hetzner --token ...`
+- Cloudflare DNS automation (A/AAAA upsert) via `domainup dns --provider cloudflare --token ...`
 - Optional htpasswd file generation for basic auth (render-time)
 - Better CORS passthrough controls
-- Traefik basic middlewares: BasicAuth + CORS
+- Traefik basic middlewares: BasicAuth + CORS + RateLimit + Sticky cookie

@@ -1,6 +1,4 @@
-from pathlib import Path
 from typing import Any
-import types
 
 from domainup.dns_providers.hetzner import ensure_dns_records_hetzner
 

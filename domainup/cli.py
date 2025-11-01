@@ -9,7 +9,7 @@ from .renderers.traefik import render_all as render_traefik
 from .docker_ops import compose_up, nginx_reload
 from .certs import obtain_certs_webroot
 from .checks import run_checks
-from .dns_providers import ensure_dns_records_hetzner
+from .dns_providers import ensure_dns_records_hetzner, ensure_dns_records_cloudflare
 
 
 app = typer.Typer(help="DomainUp – generic domain + HTTPS for Docker services (config-driven)")
@@ -107,6 +107,14 @@ def dns_cmd(
 				print(f"[cyan]→ Hetzner upsert[/] {d.host} A={ipv4 or '-'} AAAA={ipv6 or '-'}")
 				ensure_dns_records_hetzner(token, d.host, ipv4 or None, ipv6 or None)
 		print("[green]✔ DNS records ensured in Hetzner[/]")
+	elif provider.lower() == "cloudflare" and token:
+		if not ipv4 and not ipv6:
+			raise typer.BadParameter("Provide at least --ipv4 or --ipv6")
+		for d in cfg.domains:
+			if d.tls.enabled:
+				print(f"[cyan]→ Cloudflare upsert[/] {d.host} A={ipv4 or '-'} AAAA={ipv6 or '-'}")
+				ensure_dns_records_cloudflare(token, d.host, ipv4 or None, ipv6 or None)
+		print("[green]✔ DNS records ensured in Cloudflare[/]")
 	else:
 		print("[bold]Add these DNS records in your provider:[/]")
 		for d in cfg.domains:

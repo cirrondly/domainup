@@ -54,6 +54,10 @@ status:
 	-@curl -I https://$(DOMAIN_BACK)/health || true
 	-@curl -I https://$(DOMAIN_OTLP)/v1/metrics || true
 
+test:
+	@echo "[test] Running pytest in project venv (.venv)"
+	. .venv/bin/activate && python -m pytest -q
+
 install-cron:
 	@echo "[cron] Installing daily renew cron @ 03:00..."
 	( crontab -l 2>/dev/null; echo "0 3 * * * cd $$PWD && make renew" ) | crontab -
