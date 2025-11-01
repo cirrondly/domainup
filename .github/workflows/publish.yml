@@ -29,22 +29,24 @@ jobs:
 
       - name: Get version from pyproject.toml
         id: get_version
+        shell: bash
         run: |
-          python - << 'PY'
+          VERSION=$(python - << 'PY'
           import pathlib, sys
           try:
-              import tomllib  # py311+
+            import tomllib  # py311+
           except ModuleNotFoundError:  # pragma: no cover
-              import tomli as tomllib
+            import tomli as tomllib
 
           data = tomllib.loads(pathlib.Path('pyproject.toml').read_text())
           version = data.get('project', {}).get('version')
           if not version:
-              print('Could not find [project].version in pyproject.toml', file=sys.stderr)
-              sys.exit(1)
-          print(f"version={version}")
+            print('Could not find [project].version in pyproject.toml', file=sys.stderr)
+            sys.exit(1)
+          print(version, end="")
           PY
-          | tee -a "$GITHUB_OUTPUT" > /dev/null
+          )
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Check if tag exists
         id: check_tag
