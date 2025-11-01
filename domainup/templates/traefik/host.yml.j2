@@ -14,6 +14,10 @@ http:
       {% if domain.security.rate_limit.enabled %}
       {% set _ = mids.append(domain.host | replace('.', '_') ~ "_ratelimit") %}
       {% endif %}
+      {# Advanced headers: attach when HSTS enabled or extra headers present #}
+      {% if domain.headers.hsts or (domain.headers.extra and domain.headers.extra|length > 0) %}
+      {% set _ = mids.append(domain.host | replace('.', '_') ~ "_headers") %}
+      {% endif %}
       {% if mids %}
       middlewares: {{ mids }}
       {% endif %}
@@ -51,4 +55,19 @@ http:
       rateLimit:
         average: {{ (domain.security.rate_limit.requests_per_minute // 60) if (domain.security.rate_limit.requests_per_minute // 60) > 0 else 1 }}
         burst: {{ (domain.security.rate_limit.requests_per_minute // 10) if (domain.security.rate_limit.requests_per_minute // 10) > 0 else 1 }}
+    {% endif %}
+    {% if domain.headers.hsts or (domain.headers.extra and domain.headers.extra|length > 0) %}
+    {{ domain.host | replace('.', '_') }}_headers:
+      headers:
+        {% if domain.headers.extra and domain.headers.extra|length > 0 %}
+        customResponseHeaders:
+          {% for k, v in domain.headers.extra.items() %}
+          {{ k }}: {{ v | tojson }}
+          {% endfor %}
+        {% endif %}
+        {% if domain.headers.hsts %}
+        stsSeconds: 15768000
+        stsIncludeSubdomains: true
+        stsPreload: true
+        {% endif %}
     {% endif %}

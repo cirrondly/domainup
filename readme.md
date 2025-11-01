@@ -138,6 +138,54 @@ domainup dns --ipv4 203.0.113.10 --ipv6 2001:db8::10
 - `traefik/htpasswd/<host>.htpasswd` when basic auth enabled
 - `runtime/docker-compose.traefik.yml` to run the proxy
 
+
+## 🌐 DomainUp vs Hetzner DNS – Complementary Tools
+
+Developers sometimes ask: “If Hetzner DNS already exists, why would I need DomainUp?”
+Good question — they serve two different layers of the stack:
+
+| Purpose | Hetzner DNS | DomainUp |
+|---------|-------------|-----------|
+| Manage DNS zones & records | ✅ Yes – creates A/AAAA/CNAME, etc. | ✅ Yes (via provider APIs, e.g. Hetzner, Cloudflare, Vercel) |
+| Configure reverse proxy (Nginx / Traefik) | ❌ | ✅ Generates and reloads configs automatically |
+| Obtain & renew Let's Encrypt certificates | ❌ | ✅ Full automation (HTTP-01 webroot today, DNS-01 soon) |
+| Deploy and reload Dockerized reverse proxy | ❌ | ✅ domainup up, domainup reload, domainup deploy |
+| Handle websockets, headers, auth, rate-limit, gzip | ❌ | ✅ Config-driven per domain |
+| Provide a single CLI to set up new domains | ❌ | ✅ One-command automation |
+
+
+### 🧠 How they fit together
+•	Hetzner DNS is the authoritative DNS service that tells browsers “where to go”.
+It maps *.example.com → 91.98.141.137 (your server).
+
+•	DomainUp runs on that server and makes sure that, once traffic arrives,
+it’s routed to the right container, secured with HTTPS, and kept alive.
+
+You can (and should) use both:
+
+1.	Keep Hetzner DNS as your DNS provider (fast, reliable, free API).
+2.	Use DomainUp to automate everything after DNS — proxy, certs, reloads.
+3.	Or let DomainUp call Hetzner’s API directly to create/update A/AAAA records automatically:
+
+```bash
+domainup dns --provider hetzner --token $HETZNER_DNS_TOKEN \
+  --record monitoring A 91.98.141.137 \
+  --record monitoring AAAA 2a01:4f8:1c1c:5d0e::1
+```
+
+### 🔧 Typical setup
+
+1.	Create your DNS zone on Hetzner DNS or keep it on Vercel — both work.
+2.	Add A/AAAA records for each subdomain pointing to your Hetzner server.
+3.	On the server:
+
+```bash
+domainup render && domainup up && domainup cert && domainup reload
+```
+
+4.	Optionally: domainup dns hetzner --token … to automate record creation next time.
+
+
 ## Contributing
 
 Set up dev environment:
@@ -165,13 +213,13 @@ Created by Cirrondly (cirrondly.com) — a tiny startup by José MARIN.
 
 ## Roadmap
 
-- DNS provider API integrations (Vercel, Cloudflare)
+- DNS provider API integration: Vercel
 - ACME DNS-01 support
-- Traefik middlewares parity (rate-limit, sticky, advanced headers)
 
 Delivered from roadmap in this release:
 - Hetzner DNS automation (A/AAAA upsert) via `domainup dns --provider hetzner --token ...`
 - Cloudflare DNS automation (A/AAAA upsert) via `domainup dns --provider cloudflare --token ...`
 - Optional htpasswd file generation for basic auth (render-time)
 - Better CORS passthrough controls
-- Traefik basic middlewares: BasicAuth + CORS + RateLimit + Sticky cookie
+- Traefik middlewares: BasicAuth + CORS + RateLimit + Sticky cookie
+- Traefik advanced headers: HSTS + custom response headers (from `headers.hsts` and `headers.extra`)
