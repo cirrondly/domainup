@@ -1,0 +1,33 @@
+user nginx;
+worker_processes auto;
+worker_rlimit_nofile 200000;
+error_log /var/log/nginx/error.log warn;
+pid /var/run/nginx.pid;
+
+events { worker_connections 10000; multi_accept on; use epoll; }
+
+http {
+  include       /etc/nginx/mime.types;
+  default_type  application/octet-stream;
+  sendfile on; tcp_nopush on; tcp_nodelay on;
+  keepalive_timeout 65; keepalive_requests 1000;
+  types_hash_max_size 2048; server_tokens off;
+
+  client_max_body_size {{ client_max_body }};
+  resolver 127.0.0.11 valid=30s;
+
+  log_format main '$remote_addr - $remote_user [$time_local] "$request" '
+                  '$status $body_bytes_sent "$http_referer" '
+                  '"$http_user_agent" "$http_x_forwarded_for"';
+  access_log /var/log/nginx/access.log main buffer=16k;
+
+  gzip on; gzip_vary on; gzip_proxied any; gzip_comp_level 6;
+  gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript;
+
+  map $scheme $hsts_header { https "max-age=15768000; includeSubDomains; preload"; default ""; }
+
+  # rate limit zone (simple shared zone)
+  limit_req_zone $binary_remote_addr zone=rlimit_zone:10m rate=10r/s;
+
+  include /etc/nginx/conf.d/*.conf;
+}
