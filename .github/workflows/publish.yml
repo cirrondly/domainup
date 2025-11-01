@@ -15,6 +15,9 @@ concurrency:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write  # for future OIDC trusted publishing
 
     steps:
       - name: Checkout
@@ -61,6 +64,18 @@ jobs:
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Check publish credentials
+        id: pub_creds
+        shell: bash
+        run: |
+          if [ -n "${{ secrets.PYPI_API_TOKEN }}" ]; then
+            echo "has_token=true" >> "$GITHUB_OUTPUT"
+            echo "Using PyPI API token for publishing."
+          else
+            echo "has_token=false" >> "$GITHUB_OUTPUT"
+            echo "No PyPI API token found; OIDC is disabled by default. Set repo variable PUBLISH_WITH_OIDC=true after configuring PyPI Trusted Publisher to enable."
+          fi
+
       - name: Install build tool
         if: steps.check_tag.outputs.exists == 'false'
         run: |
@@ -72,15 +87,35 @@ jobs:
         run: |
           python -m build
 
-      - name: Publish to PyPI
-        if: steps.check_tag.outputs.exists == 'false'
+      - name: Publish to PyPI (token)
+        id: publish_token
+        if: steps.check_tag.outputs.exists == 'false' && steps.pub_creds.outputs.has_token == 'true'
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           password: ${{ secrets.PYPI_API_TOKEN }}
+          skip-existing: true
           verbose: true
 
+      - name: Mark published (token)
+        id: mark_published_token
+        if: steps.check_tag.outputs.exists == 'false' && steps.pub_creds.outputs.has_token == 'true' && success()
+        run: echo "published=true" >> "$GITHUB_OUTPUT"
+
+      - name: Publish to PyPI (OIDC)
+        id: publish_oidc
+        if: steps.check_tag.outputs.exists == 'false' && steps.pub_creds.outputs.has_token == 'false' && vars.PUBLISH_WITH_OIDC == 'true'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true
+          verbose: true
+
+      - name: Mark published (OIDC)
+        id: mark_published_oidc
+        if: steps.check_tag.outputs.exists == 'false' && steps.pub_creds.outputs.has_token == 'false' && vars.PUBLISH_WITH_OIDC == 'true' && success()
+        run: echo "published=true" >> "$GITHUB_OUTPUT"
+
       - name: Create and push git tag
-        if: steps.check_tag.outputs.exists == 'false'
+        if: steps.check_tag.outputs.exists == 'false' && (steps.mark_published_token.outputs.published == 'true' || steps.mark_published_oidc.outputs.published == 'true')
         env:
           VERSION: ${{ steps.get_version.outputs.version }}
         run: |
