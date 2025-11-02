@@ -77,7 +77,9 @@ domainup check --domain api.example.com       # quick diagnostics
 This automation works equally well on local **Docker Compose** or remote hosts.
 
 Local testing tips:
-- If ports 80/443 are busy, adjust host ports in `domainup.yaml` under `runtime.http_port`/`https_port` then `render` + `up`.
+- If ports 80/443 are busy, either:
+	- Override at runtime: `domainup up --http-port 8080 --https-port 8443` (no file edits), or
+	- Make it permanent: set `runtime.http_port`/`runtime.https_port` in `domainup.yaml`, then `domainup up`.
 - For HTTPS locally, use `mkcert` and place certs under `./letsencrypt/live/<host>/`.
 
 ## Example: domainup.yaml → rendered Nginx
@@ -100,7 +102,7 @@ domains:
 	- host: api.example.com
 		upstreams:
 			- name: app1
-				target: back_web_1:8000
+				target: app:8000
 				weight: 1
 		paths:
 			- path: /
@@ -214,7 +216,7 @@ domains:
 	- host: api.example.com
 		upstreams:
 			- name: app1
-				target: back_web_1:8000
+				target: app:8000
 				weight: 1
 		paths:
 			- path: /
@@ -294,6 +296,44 @@ Check DNS and TLS quickly during automation runs:
 domainup check --domain api.example.com
 ```
 
+## Auto-discovery mode (zero-config)
+
+`domainup up` can scan running Docker containers, list published ports, and guide you to map each service to a domain without touching YAML.
+
+```bash
+domainup up   # discover → ask domains → write domainup.yaml → render+up+cert+reload
+
+# Or run discovery alone:
+domainup discover
+
+# Typical guided flow
+Found 4 containers with published ports:
+
+[1] back_web_1      → 8000/tcp → 0.0.0.0:8000
+[2] otel            → 4318/tcp → 0.0.0.0:4318
+[3] grafana         → 3000/tcp → 0.0.0.0:3000
+[4] stripe_worker   → 8080/tcp → 0.0.0.0:8080
+
+Choose domain for back_web_1 (suggest: back_web_1.example.com): monitoring.cirrondly.com
+Enable websockets? [y/N]: y
+
+Choose domain for otel (suggest: otel.example.com): otlp.cirrondly.com
+Large body (20m) for OTLP? [Y/n]: y
+
+Choose domain for grafana (suggest: grafana.example.com): grafana.cirrondly.com
+Protect with Basic Auth? [y/N]: n
+
+Choose domain for stripe_worker (suggest: stripe_worker.example.com): webhooks.cirrondly.com
+```
+
+This will:
+
+1. Detect containers with published TCP ports.
+2. Let you pick a FQDN per service (with smart defaults).
+3. Write/update domainup.yaml (idempotent).
+4. Optionally start Nginx, issue certs, and reload.
+
+
 Print DNS records for your provider (Hetzner, Cloudflare, Vercel) before you flip traffic:
 
 ```bash
@@ -343,6 +383,114 @@ domainup dns --provider hetzner --token $HETZNER_DNS_TOKEN \
   --record monitoring A 91.98.141.137 \
   --record monitoring AAAA 2a01:4f8:1c1c:5d0e::1
 ```
+
+### Override ports at runtime (no file edits)
+
+If your machine already uses 80/443, you can override host ports just for this run:
+
+```bash
+domainup up --http-port 8080 --https-port 8443
+```
+
+You can still make it permanent by editing `domainup.yaml` under `runtime:` and re-running `domainup up`.
+
+## Troubleshooting
+
+### Ports 80/443 already in use
+
+Symptoms:
+
+```
+Failed: ports 80/443 already in use on host.
+```
+
+Fix it in one of these ways:
+
+- Quick (one-off):
+
+```bash
+domainup up --http-port 8080 --https-port 8443
+```
+
+- Permanent (edit config): in `domainup.yaml` set:
+
+```yaml
+runtime:
+	http_port: 8080
+	https_port: 8443
+```
+
+Then run:
+
+```bash
+domainup up
+```
+
+Or free the default ports by stopping whatever binds to 80/443 and try again.
+
+### Docker daemon is not running
+
+Symptoms:
+
+```
+Cannot connect to the Docker daemon ... Is the docker daemon running?
+```
+
+Start your Docker engine on macOS, then retry:
+
+```bash
+open -a Docker          # Docker Desktop
+# or
+colima start            # Colima
+# or
+open -a OrbStack        # OrbStack
+```
+
+The CLI detects this scenario and prints a helpful hint if Docker isn’t up.
+
+### nginx: host not found in upstream
+
+Symptoms in logs:
+
+```
+nginx: [emerg] host not found in upstream "back_web_1:8000" in /etc/nginx/conf.d/<host>.conf:2
+```
+
+What it means:
+- Nginx tried to resolve the upstream host at startup and couldn’t find it via Docker DNS.
+- Common causes: the backend container isn’t on the same Docker network as the proxy, or the target uses a container instance name instead of the Compose service name.
+
+How to fix:
+1) Ensure the backend service joins the same network as DomainUp (default `proxy_net`). In your backend compose file:
+
+```yaml
+services:
+	app:
+		image: your/image
+		networks: [proxy_net]
+
+networks:
+	proxy_net:
+		external: true
+```
+
+2) Use the Compose service name, not a container instance name. For a service named `app` listening on 8000:
+
+```yaml
+upstreams:
+	- name: app1
+		target: app:8000
+```
+
+3) If the backend is running on the host (not in Docker), you can use `host.docker.internal:PORT` on macOS.
+
+Verify connectivity:
+
+```bash
+docker network inspect proxy_net | jq '.[0].Containers | keys'
+```
+
+You should see both `nginx_proxy` and your backend service listed on `proxy_net`.
 
 ### 🔧 Typical setup
 

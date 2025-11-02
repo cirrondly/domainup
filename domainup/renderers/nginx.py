@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from datetime import datetime
 from typing import Any, Dict
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from ..config import Config, DomainConfig
@@ -28,7 +29,20 @@ def render_all(cfg: Config, cwd: Path) -> None:
 
     # nginx.conf
     nginx_conf_t = env.get_template("nginx.conf.j2")
-    (out_root / "nginx.conf").write_text(
+    nginx_conf_path = out_root / "nginx.conf"
+    if nginx_conf_path.exists() and nginx_conf_path.is_dir():
+        # Defensive auto-fix: rename the directory to a timestamped backup and proceed.
+        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+        backup_dir = out_root / f"nginx.conf.backup-{ts}"
+        try:
+            nginx_conf_path.rename(backup_dir)
+            print(f"[yellow]Renamed directory[/] {nginx_conf_path} → {backup_dir}")
+        except Exception as e:
+            raise IsADirectoryError(
+                f"Found a directory at {nginx_conf_path} and could not rename it automatically: {e}.\n"
+                "Please remove or rename it so DomainUp can write nginx.conf as a file."
+            )
+    nginx_conf_path.write_text(
         nginx_conf_t.render(client_max_body="20m")
     )
 

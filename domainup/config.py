@@ -119,7 +119,7 @@ domains:
   - host: api.example.com
     upstreams:
       - name: app1
-        target: back_web_1:8000
+        target: app:8000
         weight: 1
     paths:
       - path: /
