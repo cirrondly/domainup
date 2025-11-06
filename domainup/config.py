@@ -104,6 +104,7 @@ def load_config(path: Path) -> Config:
 
 SAMPLE_CONFIG_TEMPLATE = """
 # domainup.yaml - generic reverse proxy config
+# Run 'domainup discover' to auto-detect services or 'domainup up' for interactive setup
 version: 1
 email: {email}
 engine: nginx  # nginx | traefik (poc)
@@ -115,57 +116,7 @@ network: proxy_net
 runtime:
   http_port: 80
   https_port: 443
-domains:
-  - host: api.example.com
-    upstreams:
-      - name: app1
-        target: app:8000
-        weight: 1
-    paths:
-      - path: /
-        upstream: app1
-        websocket: true
-        strip_prefix: false
-    headers:
-      hsts: true
-      extra:
-        X-Frame-Options: DENY
-        X-Content-Type-Options: nosniff
-    security:
-      basic_auth:
-        enabled: false
-        users: []
-      allow_ips: []
-      rate_limit:
-        enabled: false
-        requests_per_minute: 600
-    tls:
-      enabled: true
-    gzip: true
-    cors_passthrough: false
-
-  - host: console.example.com
-    upstreams:
-      - name: console
-        target: console:3000
-    paths:
-      - path: /
-        upstream: console
-    security:
-      basic_auth:
-        enabled: true
-        users: ["admin:{SHA}..."]  # TODO: support htpasswd files
-    tls: { enabled: true }
-
-  - host: data.example.com
-    upstreams:
-      - name: otel
-        target: otel:4318
-    paths:
-      - path: "~* ^/(v1/|otlp/v1/)(traces|logs|metrics)"
-        upstream: otel
-        body_size: 20m
-    tls: { enabled: true }
+domains: []  # Use 'domainup discover' or 'domainup up' to add domains interactively
 """.lstrip()
 
 

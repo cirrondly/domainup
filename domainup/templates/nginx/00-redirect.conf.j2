@@ -1,6 +1,8 @@
+{% if domains %}
 server {
   listen 80; listen [::]:80;
   server_name {% for d in domains %}{{ d }} {% endfor %};
   location /.well-known/acme-challenge/ { root /var/www/certbot; }
   location / { return 301 https://$host$request_uri; }
 }
+{% endif %}

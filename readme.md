@@ -1,4 +1,4 @@
-🚀 DomainUp 0.1.2 just released – turn your Docker services into HTTPS domains in 1 minute.
+🚀 DomainUp 1.0 – turn your Docker services into HTTPS domains in 1 minute, locally or in production.
 
 # DomainUp
 
@@ -41,10 +41,17 @@ DomainUp turns that loop into a repeatable automation by reading one **YAML** ma
 
 ## Features
 - ⚡ Single **YAML** manifest defines every edge domain across Docker upstreams.
-- 🔐 Built-in **HTTPS** termination with Let’s Encrypt webroot renewals and optional HSTS.
+- 🔐 Built-in **HTTPS** termination with Let's Encrypt webroot renewals and optional HSTS.
+- 🏠 **Local development certificates**: `domainup cert --local` auto-installs mkcert and generates trusted local certs (macOS/Linux/Windows).
 - 🔁 Smart automation for DevOps teams with templated Nginx and Traefik renderers.
 - 🧰 Self-hosted friendly: headers, websockets, basic auth, rate limits, sticky cookies, and path routing.
 - 📦 Works with multiple Docker services, health checks, and per-domain overrides.
+- 🔧 **Comprehensive diagnostics**: `diagnose` command checks DNS, ports, certificates, backend connectivity with actionable fixes.
+- 🏥 **Framework-specific doctor**: Validates Django ALLOWED_HOSTS, FastAPI CORS, Express trust proxy, Flask ProxyFix.
+- 🔌 **Auto-connect backends**: Automatically connects backend services to proxy network during `domainup up`.
+- 🛡️ **Pre-flight cert checks**: Validates DNS, webroot, port 80 accessibility before Let's Encrypt issuance.
+- 👤 **User management**: `add-user` command for easy htpasswd basic auth setup.
+- 🔍 **Auto-discovery**: Detects running containers (even without published ports) and guides domain mapping.
 - FinOps-friendly: **YAML**-as-source-of-truth, predictable **HTTPS** automation, reproducible across environments.
 
 ## Quickstart
@@ -67,20 +74,62 @@ Run this minimal flow to validate the yaml stack, render Nginx, bring up the rev
 domainup init --email contact@cirrondly.com   # creates domainup.yaml skeleton
 domainup plan                                 # validate + print plan
 domainup render                               # generate Nginx configs from yaml
-domainup up                                   # start Nginx gateway
-domainup cert                                 # obtain certs (webroot)
+domainup up                                   # start Nginx gateway (auto-connects backends)
+domainup cert                                 # obtain certs (webroot with pre-flight checks)
+domainup cert --local                         # generate local dev certs with mkcert (auto-install)
 domainup reload                               # reload Nginx
 domainup deploy                               # render -> up -> cert -> reload
-domainup check --domain api.example.com       # quick diagnostics
+domainup diagnose                             # comprehensive diagnostics with fixes
+domainup doctor --framework django            # framework-specific health checks
+domainup add-user --domain api.example.com --username admin  # add htpasswd user
+domainup check --domain api.example.com       # quick diagnostics (legacy)
 ```
 
 This automation works equally well on local **Docker Compose** or remote hosts.
+
+### Local Development with HTTPS
+
+DomainUp makes local HTTPS development effortless with `mkcert` integration:
+
+```bash
+# 1. Initialize your config
+domainup init --email dev@example.com
+
+# 2. Add your local domains to /etc/hosts
+echo "127.0.0.1 myapp.local api.local" | sudo tee -a /etc/hosts
+
+# 3. Configure domains with TLS in domainup.yaml
+# Set tls.enabled: true and tls.acme: false for local domains
+
+# 4. Generate local certificates (auto-installs mkcert if needed)
+domainup cert --local
+
+# 5. Start your proxy
+domainup render && domainup up && domainup reload
+```
+
+The `cert --local` command will:
+- ✅ Detect your OS (macOS/Linux/Windows) and install mkcert if needed
+- ✅ Install the root CA in your system trust store
+- ✅ Generate certificates for all TLS-enabled domains
+- ✅ Create wildcard certs (e.g., `*.myapp.local`)
+- ✅ Save certs to `letsencrypt/live/<domain>/`
+
+**Supported platforms:**
+- macOS: `brew install mkcert`
+- Ubuntu/Debian: `apt + wget`
+- Fedora/RHEL/CentOS: `dnf + wget`
+- Arch Linux: `pacman -S mkcert`
+- Windows: `choco install mkcert`
+
+After running `cert --local`, visit `https://myapp.local` in your browser — **no certificate warnings!**
+
+### Port Configuration Tips
 
 Local testing tips:
 - If ports 80/443 are busy, either:
 	- Override at runtime: `domainup up --http-port 8080 --https-port 8443` (no file edits), or
 	- Make it permanent: set `runtime.http_port`/`runtime.https_port` in `domainup.yaml`, then `domainup up`.
-- For HTTPS locally, use `mkcert` and place certs under `./letsencrypt/live/<host>/`.
 
 ## Example: domainup.yaml → rendered Nginx
 
@@ -269,12 +318,106 @@ domains:
 | Option | Description | Default |
 |--------|-------------|---------|
 | `engine` | Selects the renderer (`Nginx` or `traefik`) for the edge gateway. | `Nginx` |
-| `cert.method` | Chooses certificate strategy (`webroot` today, `dns01` planned) via Let’s Encrypt. | `webroot` |
+| `cert.method` | Chooses certificate strategy (`webroot` today, `dns01` planned) via Let's Encrypt. | `webroot` |
 | `network` | Docker network name used to wire containers behind the gateway container. | `proxy_net` |
 | `runtime.http_port` / `runtime.https_port` | Host ports exposed for http/https listeners. | `80` / `443` |
+| `domains[].tls.enabled` | Enables HTTPS for this domain. | `false` |
+| `domains[].tls.acme` | Use Let's Encrypt for certificates (set to `false` for local dev with mkcert). | `true` |
 | `domains[].paths[].websocket` | Enables websocket upgrade support per route. | `false` |
 | `domains[].security.basic_auth` | Configures htpasswd or inline users for protected paths. | `false` |
 | `domains[].security.rate_limit` | Simple rate limiting (requests per minute) for DevOps safeguards. | `600` |
+
+## Local Development Best Practices
+
+### Complete Local Setup Guide
+
+Here's a complete workflow for local development with HTTPS:
+
+**1. Set up your local domains**
+```bash
+# Add domains to /etc/hosts
+echo "127.0.0.1 myapp.local api.local admin.local" | sudo tee -a /etc/hosts
+```
+
+**2. Initialize DomainUp**
+```bash
+cd /path/to/your/project
+domainup init --email dev@example.com --interactive
+# Or discover running containers:
+domainup discover
+```
+
+**3. Configure for local development**
+
+Edit `domainup.yaml` to set `tls.acme: false` for local domains:
+
+```yaml
+domains:
+  - host: myapp.local
+    upstreams:
+      - name: app
+        target: app:8000
+    tls:
+      enabled: true
+      acme: false  # Don't use Let's Encrypt locally
+    paths:
+      - path: /
+        upstream: app
+```
+
+**4. Generate local certificates**
+```bash
+# This auto-installs mkcert if needed
+domainup cert --local
+```
+
+**5. Start your stack**
+```bash
+domainup render
+domainup up
+domainup reload
+```
+
+**6. Test**
+```bash
+curl -I https://myapp.local
+# Should return 200 with valid certificate
+```
+
+### Backend Configuration for Proxied Requests
+
+When your backend app sits behind DomainUp's proxy, configure it to trust proxy headers:
+
+**Django (`settings.py`):**
+```python
+USE_X_FORWARDED_HOST = True
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+ALLOWED_HOSTS = ['myapp.local', 'localhost']
+CSRF_TRUSTED_ORIGINS = ['https://myapp.local']
+```
+
+**FastAPI:**
+```python
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
+
+app.add_middleware(
+    TrustedHostMiddleware,
+    allowed_hosts=["myapp.local", "localhost"]
+)
+```
+
+**Express:**
+```javascript
+app.set('trust proxy', true);
+```
+
+**Flask:**
+```python
+from werkzeug.middleware.proxy_fix import ProxyFix
+app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
+```
+
+Run `domainup doctor --framework <django|fastapi|express|flask>` to validate your backend configuration.
 
 ## Usage Examples
 
@@ -298,7 +441,9 @@ domainup check --domain api.example.com
 
 ## Auto-discovery mode (zero-config)
 
-`domainup up` can scan running Docker containers, list published ports, and guide you to map each service to a domain without touching YAML.
+`domainup up` can scan running Docker containers and guide you to map each service to a domain without touching YAML.
+
+**🆕 Enhanced Discovery:** Now detects containers on the proxy network even without published ports!
 
 ```bash
 domainup up   # discover → ask domains → write domainup.yaml → render+up+cert+reload
@@ -307,31 +452,37 @@ domainup up   # discover → ask domains → write domainup.yaml → render+up+c
 domainup discover
 
 # Typical guided flow
-Found 4 containers with published ports:
+Found 4 containers:
 
-[1] back_web_1      → 8000/tcp → 0.0.0.0:8000
-[2] otel            → 4318/tcp → 0.0.0.0:4318
-[3] grafana         → 3000/tcp → 0.0.0.0:3000
-[4] stripe_worker   → 8080/tcp → 0.0.0.0:8080
+[1] back_web_1      → 8000/tcp → 0.0.0.0:8000 (published)
+[2] back_nginx      → 80/tcp (on proxy_net, internal)
+[3] grafana         → 3000/tcp → 0.0.0.0:3000 (published)
+[4] topic_llm            → 4318/tcp → 0.0.0.0:4318 (published)
 
-Choose domain for back_web_1 (suggest: back_web_1.example.com): monitoring.cirrondly.com
+Choose domain for back_web_1 (suggest: back_web_1.example.com): api.cirrondly.com
 Enable websockets? [y/N]: y
 
-Choose domain for otel (suggest: otel.example.com): otlp.cirrondly.com
+Choose domain for back_nginx (suggest: back_nginx.example.com): app.cirrondly.com
+Enable websockets? [y/N]: n
+
+Choose domain for grafana (suggest: grafana.example.com): monitoring.cirrondly.com
+Protect with Basic Auth? [y/N]: y
+
+Choose domain for topic_llm (suggest: topic_llm.example.com): otlp.cirrondly.com
 Large body (20m) for OTLP? [Y/n]: y
-
-Choose domain for grafana (suggest: grafana.example.com): grafana.cirrondly.com
-Protect with Basic Auth? [y/N]: n
-
-Choose domain for stripe_worker (suggest: stripe_worker.example.com): webhooks.cirrondly.com
 ```
 
 This will:
 
-1. Detect containers with published TCP ports.
+1. Detect containers with:
+   - Published TCP ports (e.g., `0.0.0.0:8000→8000/tcp`)
+   - OR containers on the proxy network with exposed ports (e.g., internal nginx on port 80)
 2. Let you pick a FQDN per service (with smart defaults).
-3. Write/update domainup.yaml (idempotent).
-4. Optionally start Nginx, issue certs, and reload.
+3. Automatically choose the right upstream format:
+   - Published ports: `host.docker.internal:8000`
+   - Network-only: `container-name:80` (Docker DNS)
+4. Write/update domainup.yaml (idempotent).
+5. Optionally start Nginx, issue certs, and reload.
 
 
 Print DNS records for your provider (Hetzner, Cloudflare, Vercel) before you flip traffic:
@@ -396,6 +547,36 @@ You can still make it permanent by editing `domainup.yaml` under `runtime:` and 
 
 ## Troubleshooting
 
+### 🔍 New: Automated Diagnostics
+
+DomainUp now includes comprehensive diagnostic tools to help identify and fix issues automatically:
+
+```bash
+# Run full diagnostics (checks all TLS domains)
+domainup diagnose
+
+# Check specific domain
+domainup diagnose --domain api.example.com
+
+# Framework-specific health checks
+domainup doctor --framework django
+domainup doctor --framework fastapi
+domainup doctor --framework express
+domainup doctor --framework flask
+```
+
+The `diagnose` command checks:
+- ✅ Docker daemon status
+- ✅ Proxy network existence and connectivity
+- ✅ Nginx container health
+- ✅ Host port availability (80/443)
+- ✅ DNS resolution for all domains
+- ✅ Certificate status and expiry
+- ✅ ACME webroot accessibility
+- ✅ Backend service connectivity
+
+Each check provides **copy-paste fixes** for common issues.
+
 ### Ports 80/443 already in use
 
 Symptoms:
@@ -457,11 +638,19 @@ nginx: [emerg] host not found in upstream "back_web_1:8000" in /etc/nginx/conf.d
 ```
 
 What it means:
-- Nginx tried to resolve the upstream host at startup and couldn’t find it via Docker DNS.
-- Common causes: the backend container isn’t on the same Docker network as the proxy, or the target uses a container instance name instead of the Compose service name.
+- Nginx tried to resolve the upstream host at startup and couldn't find it via Docker DNS.
+- Common causes: the backend container isn't on the same Docker network as the proxy, or the target uses a container instance name instead of the Compose service name.
 
-How to fix:
-1) Ensure the backend service joins the same network as DomainUp (default `proxy_net`). In your backend compose file:
+**🆕 Automatic Fix:**
+Starting from v0.2, `domainup up` automatically connects backend services to the proxy network! If you still see this error:
+
+1) Run diagnostics to identify the issue:
+
+```bash
+domainup diagnose --domain your-domain.com
+```
+
+2) Ensure the backend service joins the same network as DomainUp (default `proxy_net`). In your backend compose file:
 
 ```yaml
 services:
@@ -474,7 +663,7 @@ networks:
 		external: true
 ```
 
-2) Use the Compose service name, not a container instance name. For a service named `app` listening on 8000:
+3) Use the Compose service name, not a container instance name. For a service named `app` listening on 8000:
 
 ```yaml
 upstreams:
@@ -482,7 +671,7 @@ upstreams:
 		target: app:8000
 ```
 
-3) If the backend is running on the host (not in Docker), you can use `host.docker.internal:PORT` on macOS.
+4) If the backend is running on the host (not in Docker), you can use `host.docker.internal:PORT` on macOS.
 
 Verify connectivity:
 
@@ -491,6 +680,42 @@ docker network inspect proxy_net | jq '.[0].Containers | keys'
 ```
 
 You should see both `nginx_proxy` and your backend service listed on `proxy_net`.
+
+### Certificate Issuance Failed
+
+**🆕 Enhanced Troubleshooting:**
+
+The `domainup cert` command now includes:
+- ✅ **Pre-flight checks**: Validates DNS, webroot, port 80 accessibility before attempting issuance
+- ✅ **Smart error detection**: Identifies rate limits, DNS issues, firewall problems, timeouts
+- ✅ **Copy-paste fixes**: Provides exact commands to resolve common issues
+
+Common scenarios automatically detected:
+
+**Rate limit hit:**
+```
+Let's Encrypt rate limit hit or policy violation
+→ Fix: Set cert.staging: true in domainup.yaml and retry
+→ Wait: 1 hour between attempts for the same domain
+```
+
+**Port 80 not accessible:**
+```
+ACME HTTP-01 validation failed
+→ Fix: sudo ufw allow 80/tcp
+→ Test: curl http://<domain>/.well-known/acme-challenge/test
+→ Check: docker ps | grep nginx_proxy
+```
+
+**DNS not resolving:**
+```
+DNS does not resolve to this server
+→ Fix: dig +short A <domain>
+→ Ensure: A/AAAA records point to your server IP
+→ Wait: Up to 24h for DNS propagation
+```
+
+Run `domainup diagnose` before `domainup cert` to catch issues early!
 
 ### 🔧 Typical setup
 
@@ -514,8 +739,24 @@ domainup render && domainup up && domainup cert && domainup reload
 
 - DNS provider API integration: Vercel
 - ACME DNS-01 support
+- Certbot sidecar with 12h auto-renewal
+- Named rate limits per domain
+- Sticky session improvements
 
-Delivered from roadmap in this release:
+**✨ New in v1.0:**
+- **🏠 Local HTTPS certificates**: `domainup cert --local` with automatic mkcert installation (macOS/Linux/Windows)
+- **🔍 Enhanced discovery**: Detects containers on proxy network even without published ports
+- **🔧 Smart 00-redirect handling**: Only generates HTTP→HTTPS redirect when TLS domains exist
+- **Comprehensive diagnostics**: `domainup diagnose` checks DNS, ports, certs, backend connectivity
+- **Framework doctor**: Health checks for Django, FastAPI, Express, Flask
+- **Auto-connect backends**: Automatically connects services to proxy network
+- **Pre-flight cert checks**: Validates setup before Let's Encrypt issuance
+- **Improved proxy headers**: Added `X-Forwarded-Host`, `X-Forwarded-Port`, `proxy_redirect off`
+- **Better error messages**: Actionable troubleshooting for common issues
+- **User management**: `add-user` command for htpasswd basic auth
+- **Auto-init on up**: Creates config via discovery if domainup.yaml missing
+
+Delivered from roadmap in previous releases:
 - Hetzner DNS automation (A/AAAA upsert) via `domainup dns --provider hetzner --token ...`
 - Cloudflare DNS automation (A/AAAA upsert) via `domainup dns --provider cloudflare --token ...`
 - Optional htpasswd file generation for basic auth (render-time)

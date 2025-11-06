@@ -23,19 +23,24 @@ def _try_import_docker():
         return None
 
 
-def discover_services() -> List[ServiceInfo]:
-    """Detect running containers that publish TCP ports on the host.
+def discover_services(include_network_only: bool = True) -> List[ServiceInfo]:
+    """Detect running containers that either publish TCP ports OR are on proxy_net.
 
         Returns a list of dicts with keys:
       - name: container name
       - image: image name
       - published: list of tuples (container_port, host_ip, host_port) as strings
-            - networks: list of network names this container is attached to
+      - networks: list of network names this container is attached to
+      - exposed: list of exposed ports (if no published ports but on proxy network)
 
     Uses Docker SDK if available; falls back to `docker ps` + `docker inspect`.
-    Filters: only TCP; only published ports; excludes nginx_proxy, certbot by default.
+    Filters: TCP only; published ports OR on proxy_net; excludes nginx_proxy, certbot.
+    
+    Args:
+        include_network_only: If True, also includes containers on proxy_net without published ports
     """
     EXCLUDE = {"nginx_proxy", "certbot"}
+    PROXY_NETWORKS = {"proxy_net", "proxy-net", "proxy_network"}
 
     docker = _try_import_docker()
     results: List[ServiceInfo] = []
@@ -50,23 +55,29 @@ def discover_services() -> List[ServiceInfo]:
                 ports = (info.get("NetworkSettings") or {}).get("Ports") or {}
                 published: List[Tuple[str, str, str]] = []
                 for container_port, bindings in ports.items():
-                    if not bindings:
-                        continue
-                    if "/tcp" not in str(container_port):
-                        continue
-                    for b in bindings or []:
-                        host_ip = (b or {}).get("HostIp")
-                        host_port = (b or {}).get("HostPort")
-                        if host_port:
-                            published.append((str(container_port), str(host_ip or "0.0.0.0"), str(host_port)))
-                # collect networks
+                    if bindings and "/tcp" in str(container_port):
+                        for b in bindings or []:
+                            host_ip = (b or {}).get("HostIp")
+                            host_port = (b or {}).get("HostPort")
+                            if host_port:
+                                published.append((str(container_port), str(host_ip or "0.0.0.0"), str(host_port)))
+                
+                # Collect networks
                 networks = list(((info.get("NetworkSettings") or {}).get("Networks") or {}).keys())
-                if published:
+                
+                # Get exposed ports (even if not published)
+                exposed_ports = list((info.get("Config") or {}).get("ExposedPorts", {}).keys())
+                exposed = [p.split("/")[0] for p in exposed_ports if "/tcp" in p]
+                
+                # Include if: has published ports OR (on proxy network AND has exposed ports)
+                on_proxy_net = include_network_only and any(net in PROXY_NETWORKS for net in networks)
+                if published or (on_proxy_net and exposed):
                     results.append({
                         "name": c.name,
                         "image": (info.get("Config") or {}).get("Image", ""),
                         "published": published,
                         "networks": networks,
+                        "exposed": exposed if not published else [],
                     })
             return results
         except Exception:
@@ -99,21 +110,26 @@ def discover_services() -> List[ServiceInfo]:
             networks = list((ns.get("Networks") or {}).keys())
             published: List[Tuple[str, str, str]] = []
             for container_port, bindings in ports.items():
-                if not bindings:
-                    continue
-                if "/tcp" not in str(container_port):
-                    continue
-                for b in bindings or []:
-                    host_ip = (b or {}).get("HostIp")
-                    host_port = (b or {}).get("HostPort")
-                    if host_port:
-                        published.append((str(container_port), str(host_ip or "0.0.0.0"), str(host_port)))
-            if published:
+                if bindings and "/tcp" in str(container_port):
+                    for b in bindings or []:
+                        host_ip = (b or {}).get("HostIp")
+                        host_port = (b or {}).get("HostPort")
+                        if host_port:
+                            published.append((str(container_port), str(host_ip or "0.0.0.0"), str(host_port)))
+            
+            # Get exposed ports (even if not published)
+            exposed_ports = list((info.get("Config") or {}).get("ExposedPorts", {}).keys())
+            exposed = [p.split("/")[0] for p in exposed_ports if "/tcp" in p]
+            
+            # Include if: has published ports OR (on proxy network AND has exposed ports)
+            on_proxy_net = include_network_only and any(net in PROXY_NETWORKS for net in networks)
+            if published or (on_proxy_net and exposed):
                 out.append({
                     "name": name,
                     "image": image,
                     "published": published,
                     "networks": networks,
+                    "exposed": exposed if not published else [],
                 })
         return out
     except Exception:
@@ -168,54 +184,79 @@ def interactive_map(services: List[ServiceInfo], *, base_domain: Optional[str] =
     base_domain = base_domain or _infer_base_domain(cfg)
     base_domain = questionary.text("Base domain (for suggestions)", default=base_domain).ask() or base_domain
 
-    print("Found {} containers with published ports:\n".format(len(services)))
+    print("Found {} container(s):\n".format(len(services)))
     for idx, s in enumerate(services, start=1):
-        # Deduplicate by (container_port, host_port), prefer IPv4 if both exist
-        seen_pairs = set()
-        deduped = []
-        for cp, hip, hp in s.get("published", []) or []:
-            key = (cp, hp)
-            if key in seen_pairs:
-                # prefer IPv4 over IPv6 display
-                continue
-            seen_pairs.add(key)
-            deduped.append((cp, hip, hp))
-        for cp, hip, hp in deduped:
-            print(f"[{idx}] {s['name']:<15} → {cp:<8} → {hip}:{hp}")
+        pubs = s.get("published", []) or []
+        exposed = s.get("exposed", []) or []
+        
+        if pubs:
+            # Deduplicate by (container_port, host_port), prefer IPv4 if both exist
+            seen_pairs = set()
+            deduped = []
+            for cp, hip, hp in pubs:
+                key = (cp, hp)
+                if key in seen_pairs:
+                    continue
+                seen_pairs.add(key)
+                deduped.append((cp, hip, hp))
+            for cp, hip, hp in deduped:
+                print(f"[{idx}] {s['name']:<15} → {cp:<8} → {hip}:{hp}")
+        elif exposed:
+            # Show exposed ports (on proxy network but not published)
+            nets = ", ".join(s.get("networks", []))
+            print(f"[{idx}] {s['name']:<15} → expose: {'/'.join(exposed)} on [{nets}]")
 
     mappings: List[MappingEntry] = []
 
     for s in services:
-        pubs = s.get("published") or []
-        if not pubs:
+        pubs = s.get("published", []) or []
+        exposed = s.get("exposed", []) or []
+        if not pubs and not exposed:
             continue
         # Ask if user wants to add this service
         add_q = questionary.confirm(f"Add service {s['name']}?", default=True)
         add_it = bool(add_q.ask()) if hasattr(add_q, "ask") else bool(add_q)
         if not add_it:
             continue
-        choice: Tuple[str, str, str]
-        # Deduplicate choices by (container_port, host_port)
-        seen = {}
-        for cp, hip, hp in pubs:
-            key = (cp, hp)
-            # prefer IPv4 over IPv6 if duplicates
-            if key not in seen or (seen[key][1].startswith("::") and not str(hip).startswith("::")):
-                seen[key] = (cp, hip, hp)
-        options_list = list(seen.values())
-        if len(options_list) == 1:
-            choice = options_list[0]
-        else:
-            # Present choices like "8000/tcp → 0.0.0.0:8000"
-            import questionary  # local
-            options = [f"{cp} → {hip}:{hp}" for (cp, hip, hp) in options_list]
-            pick = questionary.select(
-                f"Select port for {s['name']}", choices=options
-            ).ask()
-            idx = options.index(pick)
-            choice = options_list[idx]
-
-        container_port, _host_ip, host_port = choice
+        
+        container_port: str
+        host_port: str
+        use_docker_dns = False
+        
+        if pubs:
+            # Has published ports
+            choice: Tuple[str, str, str]
+            # Deduplicate choices by (container_port, host_port)
+            seen = {}
+            for cp, hip, hp in pubs:
+                key = (cp, hp)
+                # prefer IPv4 over IPv6 if duplicates
+                if key not in seen or (seen[key][1].startswith("::") and not str(hip).startswith("::")):
+                    seen[key] = (cp, hip, hp)
+            options_list = list(seen.values())
+            if len(options_list) == 1:
+                choice = options_list[0]
+            else:
+                # Present choices like "8000/tcp → 0.0.0.0:8000"
+                import questionary  # local
+                options = [f"{cp} → {hip}:{hp}" for (cp, hip, hp) in options_list]
+                pick = questionary.select(
+                    f"Select port for {s['name']}", choices=options
+                ).ask()
+                idx = options.index(pick)
+                choice = options_list[idx]
+            container_port, _host_ip, host_port = choice
+        elif exposed:
+            # Only exposed ports (on proxy network) - use Docker DNS
+            use_docker_dns = True
+            if len(exposed) == 1:
+                container_port = exposed[0]
+            else:
+                import questionary
+                container_port = questionary.select(
+                    f"Select exposed port for {s['name']}", choices=exposed
+                ).ask() or exposed[0]
+            host_port = container_port
         defaults = _heuristic_defaults(s["name"], container_port)
 
         suggested = _suggest_host(s["name"], base_domain)
@@ -241,13 +282,15 @@ def interactive_map(services: List[ServiceInfo], *, base_domain: Optional[str] =
             basic = bool(ba.ask()) if hasattr(ba, "ask") else bool(ba)
 
         up_name = re.sub(r"[^a-z0-9_\-]", "_", s["name"].lower()) or "app"
-        # Choose target: if service is on proxy network, use container name + container_port.
+        # Choose target: if service is on proxy network OR only has exposed ports, use container name + container_port.
         # Otherwise, route via host published port using host.docker.internal.
         proxy_net = (cfg.network if cfg else "proxy_net")
         networks = set(s.get("networks") or [])
-        if proxy_net in networks:
+        if use_docker_dns or proxy_net in networks:
+            # Use Docker DNS (service name directly accessible on network)
             target = f"{s['name']}:{int(str(container_port).split('/')[0])}"
         else:
+            # Use host.docker.internal for published ports
             target = f"host.docker.internal:{int(host_port)}"
             # Guard against routing to host ports 80/443 which likely loop back to DomainUp itself
             try:

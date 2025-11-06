@@ -28,6 +28,12 @@ def compose_up(
         # Always ensure compose file reflects current network
         _ensure_runtime_compose(cwd, network, http_port=http_port, https_port=https_port)
         _ensure_docker_network(network)
+        # Auto-connect backend services to proxy network
+        try:
+            cfg = load_config(cwd / "domainup.yaml")
+            _auto_connect_backend_services(cfg, network)
+        except Exception as e:
+            print(f"[dim]Skipping auto-connect of backend services:[/] {e}")
         print("[cyan]→ docker compose up -d (nginx)[/]")
         proc = subprocess.run(
             ["docker", "compose", "-f", str(compose_file), "up", "-d"],
@@ -97,9 +103,22 @@ def _ensure_dummy_certs(cwd: Path, cfg) -> None:
             except Exception:
                 pass
             print("[yellow]openssl not available or failed; Nginx may fail until certs are issued via domainup cert.[/]")
+        else:
+            # Drop a marker so the cert workflow can prune this before real issuance
+            try:
+                (target_dir / ".domainup-dummy").write_text("dummy\n")
+            except Exception:
+                pass
 
 
 def nginx_reload() -> None:
+    print("[cyan]→ docker exec nginx_proxy nginx -t[/]")
+    test = subprocess.run(["docker", "exec", "nginx_proxy", "nginx", "-t"], capture_output=True, text=True)
+    if test.returncode != 0:
+        out = (test.stderr or test.stdout or "").strip()
+        print(f"[red]Nginx config test failed:[/]\n{out}")
+        print("Fix your domain mappings (invalid upstream hostnames?) and re-render before reloading.")
+        return
     print("[cyan]→ docker exec nginx_proxy nginx -s reload[/]")
     subprocess.run(["docker", "exec", "nginx_proxy", "nginx", "-s", "reload"], check=False)
 
@@ -260,3 +279,75 @@ def discover_network_targets(network: str) -> list[dict]:
             "ports": sorted(set(ports)),
         })
     return results
+
+
+def _auto_connect_backend_services(cfg, network: str) -> None:
+    """Auto-connect backend services referenced in upstreams to proxy network.
+    
+    Parses all upstream targets from config, extracts container/service names,
+    and connects them to the proxy network if not already connected.
+    """
+    backend_targets = set()
+    for domain in cfg.domains:
+        for upstream in domain.upstreams:
+            # Parse target like "app:8000" or "service:80"
+            target = upstream.target.strip()
+            # Skip host.docker.internal and IP addresses
+            if "host.docker.internal" in target:
+                continue
+            if target.replace(".", "").replace(":", "").isdigit():  # Simple IP check
+                continue
+            # Extract hostname part before port
+            hostname = target.split(":")[0] if ":" in target else target
+            if hostname:
+                backend_targets.add(hostname)
+    
+    if not backend_targets:
+        return
+    
+    # Get all running containers
+    proc = subprocess.run(
+        ["docker", "ps", "--format", "{{.Names}}"],
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        return
+    
+    running_containers = [name.strip() for name in proc.stdout.strip().split("\n") if name.strip()]
+    
+    # Try to connect matching containers
+    connected = []
+    for target in backend_targets:
+        # Find containers matching this target (exact name or service name)
+        for container in running_containers:
+            if target in container or container == target:
+                # Check if already connected
+                insp = subprocess.run(
+                    ["docker", "inspect", container],
+                    capture_output=True,
+                    text=True,
+                )
+                if insp.returncode != 0:
+                    continue
+                
+                try:
+                    data = json.loads(insp.stdout)
+                    if data:
+                        networks = (data[0].get("NetworkSettings", {}).get("Networks", {}))
+                        if network in networks:
+                            continue  # Already connected
+                        
+                        # Connect to network
+                        conn_proc = subprocess.run(
+                            ["docker", "network", "connect", network, container],
+                            capture_output=True,
+                            text=True,
+                        )
+                        if conn_proc.returncode == 0:
+                            connected.append(container)
+                except Exception:
+                    continue
+    
+    if connected:
+        print(f"[green]✔ Auto-connected backend services to {network}:[/] {', '.join(connected)}")

@@ -46,12 +46,16 @@ def render_all(cfg: Config, cwd: Path) -> None:
         nginx_conf_t.render(client_max_body="20m")
     )
 
-    # 00-redirect
-    redirect_t = env.get_template("00-redirect.conf.j2")
+    # 00-redirect (only create if there are TLS-enabled domains)
     tls_hosts = [d.host for d in cfg.domains if d.tls.enabled]
-    (conf_d / "00-redirect.conf").write_text(
-        redirect_t.render(domains=tls_hosts)
-    )
+    redirect_file = conf_d / "00-redirect.conf"
+    if tls_hosts:
+        redirect_t = env.get_template("00-redirect.conf.j2")
+        redirect_file.write_text(redirect_t.render(domains=tls_hosts))
+    elif redirect_file.exists():
+        # Remove the file if it exists but there are no TLS domains
+        redirect_file.unlink()
+        print("[dim]Removed 00-redirect.conf (no TLS-enabled domains)[/]")
 
     # vhosts
     vhost_t = env.get_template("vhost.conf.j2")
