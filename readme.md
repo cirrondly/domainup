@@ -1,4 +1,4 @@
-🚀 DomainUp 1.0 – turn your Docker services into HTTPS domains in 1 minute, locally or in production.
+🚀 DomainUp 0.1.4 – turn your Docker services into HTTPS domains in 1 minute, locally or in production.
 
 # DomainUp
 
@@ -743,7 +743,7 @@ domainup render && domainup up && domainup cert && domainup reload
 - Named rate limits per domain
 - Sticky session improvements
 
-**✨ New in v1.0:**
+**✨ New in v0.1.4:**
 - **🏠 Local HTTPS certificates**: `domainup cert --local` with automatic mkcert installation (macOS/Linux/Windows)
 - **🔍 Enhanced discovery**: Detects containers on proxy network even without published ports
 - **🔧 Smart 00-redirect handling**: Only generates HTTP→HTTPS redirect when TLS domains exist
