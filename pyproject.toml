@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "domainup"
-version = "0.1.4"
+version = "1.0.0"
 description = "Domain + HTTPS setup for Docker services (Nginx + Certbot)"
 authors = [{ name="Cirrondly", email="contact@cirrondly.com" }]
 readme = "README.md"
