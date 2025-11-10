@@ -10,7 +10,7 @@ class _Res:
         self.stderr = stderr
 
 
-def test_discover_services_cli_fallback(monkeypatch, tmp_path: Path):
+def test_discover_services_cli_fallback(monkeypatch, tmp_path):
     # Force SDK import failure by shadowing import inside0 module
     import domainup.commands.discover_cmd as mod
     mod._try_import_docker = lambda: None
@@ -50,7 +50,6 @@ def test_discover_services_cli_fallback(monkeypatch, tmp_path: Path):
     monkeypatch.setattr("subprocess.run", fake_run)
 
     services = discover_services()
-    # Should detect only TCP published ports
     names = [s["name"] for s in services]
     assert "web_1" in names
     assert "grafana" in names
