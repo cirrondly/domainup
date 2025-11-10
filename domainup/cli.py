@@ -560,13 +560,18 @@ def add_user_cmd(
 
 @app.command("discover")
 def discover_cmd():
-	"""Auto-discover Docker containers with published ports and interactively map them to domains.
+	"""Auto-discover Docker containers AND localhost services, then interactively map them to domains.
 
+	Discovers both:
+	- Docker containers with published ports or on proxy network
+	- Localhost services running on common development ports (3000-9000)
+	
 	This writes/updates domainup.yaml idempotently.
 	"""
 	services = discover_published_services()
 	if not services:
-		print("[yellow]No containers with published TCP ports detected.[/]")
+		print("[yellow]No Docker containers or localhost services detected.[/]")
+		print("[dim]Tip: Ensure your development servers are running (npm run dev, python manage.py runserver, etc.)[/]")
 		raise typer.Exit(code=0)
 	mappings = discover_interactive_map(services, cwd=Path.cwd())
 	if not mappings:

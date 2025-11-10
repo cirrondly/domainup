@@ -8,6 +8,7 @@ import re
 import yaml
 
 from ..config import load_config, Config, DomainConfig, Upstream, PathRoute
+from ..localhost_discovery import discover_localhost_services
 
 
 # Types
@@ -23,22 +24,55 @@ def _try_import_docker():
         return None
 
 
-def discover_services(include_network_only: bool = True) -> List[ServiceInfo]:
-    """Detect running containers that either publish TCP ports OR are on proxy_net.
+def discover_services(include_network_only: bool = True, include_localhost: bool = True) -> List[ServiceInfo]:
+    """Detect running containers that either publish TCP ports OR are on proxy_net, plus localhost services.
 
         Returns a list of dicts with keys:
-      - name: container name
-      - image: image name
+      - name: container name or localhost service name
+      - image: image name (empty for localhost services)
       - published: list of tuples (container_port, host_ip, host_port) as strings
-      - networks: list of network names this container is attached to
+      - networks: list of network names this container is attached to (empty for localhost)
       - exposed: list of exposed ports (if no published ports but on proxy network)
+      - localhost: boolean flag (True for localhost services, False/missing for Docker)
 
     Uses Docker SDK if available; falls back to `docker ps` + `docker inspect`.
     Filters: TCP only; published ports OR on proxy_net; excludes nginx_proxy, certbot.
     
     Args:
         include_network_only: If True, also includes containers on proxy_net without published ports
+        include_localhost: If True, also scans for localhost services on common dev ports
     """
+    # Get Docker services
+    docker_services = _discover_docker_services(include_network_only)
+    
+    # Get localhost services if requested
+    localhost_services = []
+    if include_localhost:
+        try:
+            localhost_services_raw = discover_localhost_services()
+            # Convert localhost services to the same format as Docker services
+            for service in localhost_services_raw:
+                localhost_services.append({
+                    "name": service["name"],
+                    "image": "",  # No image for localhost services
+                    "published": [(f"{service['port']}/tcp", "127.0.0.1", str(service['port']))],
+                    "networks": [],  # No networks for localhost services
+                    "exposed": [],
+                    "localhost": True,  # Mark as localhost service
+                    "type": "localhost",  # Add type field for identification
+                    "port": service["port"],
+                    "process": service.get("process", "unknown")
+                })
+        except Exception:
+            # If localhost discovery fails, continue with just Docker services
+            pass
+    
+    # Combine and return both types
+    return docker_services + localhost_services
+
+
+def _discover_docker_services(include_network_only: bool = True) -> List[ServiceInfo]:
+    """Internal function to discover Docker services only."""
     EXCLUDE = {"nginx_proxy", "certbot"}
     PROXY_NETWORKS = {"proxy_net", "proxy-net", "proxy_network"}
 
@@ -78,11 +112,12 @@ def discover_services(include_network_only: bool = True) -> List[ServiceInfo]:
                         "published": published,
                         "networks": networks,
                         "exposed": exposed if not published else [],
+                        "localhost": False,  # Mark as Docker service
                     })
             return results
         except Exception:
             # Fall through to CLI fallback
-            pass
+            results = []
 
     # CLI fallback
     try:
@@ -130,6 +165,7 @@ def discover_services(include_network_only: bool = True) -> List[ServiceInfo]:
                     "published": published,
                     "networks": networks,
                     "exposed": exposed if not published else [],
+                    "localhost": False,  # Mark as Docker service
                 })
         return out
     except Exception:
@@ -184,10 +220,20 @@ def interactive_map(services: List[ServiceInfo], *, base_domain: Optional[str] =
     base_domain = base_domain or _infer_base_domain(cfg)
     base_domain = questionary.text("Base domain (for suggestions)", default=base_domain).ask() or base_domain
 
-    print("Found {} container(s):\n".format(len(services)))
+    docker_count = len([s for s in services if not s.get("localhost", False)])
+    localhost_count = len([s for s in services if s.get("localhost", False)])
+    
+    print("Found {} service(s):\n".format(len(services)))
+    if docker_count > 0:
+        print(f"  Docker containers: {docker_count}")
+    if localhost_count > 0:
+        print(f"  Localhost services: {localhost_count}")
+    print()
+    
     for idx, s in enumerate(services, start=1):
         pubs = s.get("published", []) or []
         exposed = s.get("exposed", []) or []
+        is_localhost = s.get("localhost", False)
         
         if pubs:
             # Deduplicate by (container_port, host_port), prefer IPv4 if both exist
@@ -200,11 +246,12 @@ def interactive_map(services: List[ServiceInfo], *, base_domain: Optional[str] =
                 seen_pairs.add(key)
                 deduped.append((cp, hip, hp))
             for cp, hip, hp in deduped:
-                print(f"[{idx}] {s['name']:<15} → {cp:<8} → {hip}:{hp}")
+                service_type = "[localhost]" if is_localhost else "[docker]  "
+                print(f"[{idx}] {service_type} {s['name']:<15} → {cp:<8} → {hip}:{hp}")
         elif exposed:
             # Show exposed ports (on proxy network but not published)
             nets = ", ".join(s.get("networks", []))
-            print(f"[{idx}] {s['name']:<15} → expose: {'/'.join(exposed)} on [{nets}]")
+            print(f"[{idx}] [docker]   {s['name']:<15} → expose: {'/'.join(exposed)} on [{nets}]")
 
     mappings: List[MappingEntry] = []
 
@@ -219,9 +266,10 @@ def interactive_map(services: List[ServiceInfo], *, base_domain: Optional[str] =
         if not add_it:
             continue
         
-        container_port: str
-        host_port: str
+        container_port: str = ""
+        host_port: str = ""
         use_docker_dns = False
+        is_localhost = s.get("localhost", False)
         
         if pubs:
             # Has published ports
@@ -257,9 +305,15 @@ def interactive_map(services: List[ServiceInfo], *, base_domain: Optional[str] =
                     f"Select exposed port for {s['name']}", choices=exposed
                 ).ask() or exposed[0]
             host_port = container_port
+        
+        # Ensure container_port is set for localhost services
+        if not container_port and is_localhost:
+            container_port = str(s.get("port", 80))
+            host_port = container_port
+            
         defaults = _heuristic_defaults(s["name"], container_port)
 
-        suggested = _suggest_host(s["name"], base_domain)
+        suggested = _suggest_host(s["name"], base_domain or "example.com")
         fqdn = questionary.text(
             f"Choose domain for {s['name']} (suggest: {suggested})",
             default=suggested,
@@ -282,17 +336,21 @@ def interactive_map(services: List[ServiceInfo], *, base_domain: Optional[str] =
             basic = bool(ba.ask()) if hasattr(ba, "ask") else bool(ba)
 
         up_name = re.sub(r"[^a-z0-9_\-]", "_", s["name"].lower()) or "app"
-        # Choose target: if service is on proxy network OR only has exposed ports, use container name + container_port.
-        # Otherwise, route via host published port using host.docker.internal.
+        
+        # Choose target based on service type
         proxy_net = (cfg.network if cfg else "proxy_net")
-        networks = set(s.get("networks") or [])
-        if use_docker_dns or proxy_net in networks:
+        if is_localhost:
+            # For localhost services, always route via host.docker.internal
+            target = f"host.docker.internal:{int(host_port)}"
+        elif use_docker_dns or proxy_net in (set(s.get("networks") or [])):
             # Use Docker DNS (service name directly accessible on network)
             target = f"{s['name']}:{int(str(container_port).split('/')[0])}"
         else:
             # Use host.docker.internal for published ports
             target = f"host.docker.internal:{int(host_port)}"
-            # Guard against routing to host ports 80/443 which likely loop back to DomainUp itself
+            
+        # Guard against routing to host ports 80/443 which likely loop back to DomainUp itself
+        if not is_localhost:  # Only apply this check for Docker services
             try:
                 hp = int(host_port)
             except Exception:

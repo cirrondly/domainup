@@ -87,6 +87,26 @@ domainup check --domain api.example.com       # quick diagnostics (legacy)
 
 This automation works equally well on local **Docker Compose** or remote hosts.
 
+
+### Vite/React Dev Server Tip
+
+If you use Vite (React, Vue, etc.) for local development, make sure your dev server is accessible on localhost for service discovery:
+
+**Add this to your `vite.config.js` or `vite.config.ts`:**
+
+```js
+export default defineConfig({
+	// ...existing config...
+	server: {
+		host: true
+	}
+})
+```
+
+This ensures Vite listens on all interfaces and is detected by `domainup discover`.
+
+---
+
 ### Local Development with HTTPS
 
 DomainUp makes local HTTPS development effortless with `mkcert` integration:
